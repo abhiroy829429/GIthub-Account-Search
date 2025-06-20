@@ -1,66 +1,115 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { findGithubAccounts } from "./api/github";
 import "./App.css";
-import UserCard from "./components/user-card/user-card";
+import SearchBar from "./components/SearchBar/SearchBar";
+import Suggestions from "./components/Suggestions/Suggestions";
+import UserCard from "./components/UserCard/UserCard";
 
 export default function App() {
-  // State to store the input from the search bar
   const [inputValue, setInputValue] = useState("");
-
-  // State to store the list of GitHub users returned from the API
   const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef(null);
+  const debounceTimeout = useRef(null);
+  const [suggestLoading, setSuggestLoading] = useState(false);
 
-  // Function to handle changes in the input field
-  function handleOnChange(event) {
-    setInputValue(event.target.value); // Update inputValue state as user types
-  }
-
-  // GitHub API base URL
-  const API_URL = "https://api.github.com";
-
-  // Function to fetch GitHub users based on the search query
-  async function findGithubAccounts(query) {
-    try {
-      // Sending a request to GitHub API to search users
-      const response = await fetch(`${API_URL}/search/users?q=${query}`);
-      const json = await response.json();
-      return json.items || []; // Return the list of users, or an empty array if none
-    } catch (e) {
-      throw new Error(e); // Handle errors if API call fails
+  useEffect(() => {
+    if (!inputValue) {
+      setSuggestions([]);
+      return;
     }
+    setShowSuggestions(true);
+    if (debounceTimeout.current) clearTimeout(debounceTimeout.current);
+    debounceTimeout.current = setTimeout(async () => {
+      setSuggestLoading(true);
+      try {
+        const users = await findGithubAccounts(inputValue);
+        const filtered = users.filter(user => {
+          const loginMatch = user.login.toLowerCase().includes(inputValue.toLowerCase());
+          const nameMatch = user.name && user.name.toLowerCase().includes(inputValue.toLowerCase());
+          return loginMatch || nameMatch;
+        });
+        setSuggestions(filtered.slice(0, 5));
+      } catch {
+        setSuggestions([]);
+      }
+      setSuggestLoading(false);
+    }, 400);
+    return () => clearTimeout(debounceTimeout.current);
+  }, [inputValue]);
+
+  function handleSuggestionClick(username) {
+    setInputValue(username);
+    setShowSuggestions(false);
+    setSuggestions([]);
+    inputRef.current.blur();
   }
 
-  // Function to trigger when the "Search" button is clicked
-  async function onSearchSubmit() {
-    const results = await findGithubAccounts(inputValue); // Get search results
-    setResults(results); // Update the results state to display the data
+  function handleInputBlur() {
+    setTimeout(() => setShowSuggestions(false), 120);
   }
 
-  // JSX returned by the component
+  function handleOnChange(event) {
+    setInputValue(event.target.value);
+  }
+
+  async function onSearchSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const results = await findGithubAccounts(inputValue);
+      setResults(results);
+      if (results.length === 0) setError("No users found.");
+    } catch (e) {
+      setError("Failed to fetch users.");
+    }
+    setLoading(false);
+  }
+
+  function highlightMatch(text) {
+    const idx = text.toLowerCase().indexOf(inputValue.toLowerCase());
+    if (idx === -1) return text;
+    return <span>{text.slice(0, idx)}<span className="highlight">{text.slice(idx, idx + inputValue.length)}</span>{text.slice(idx + inputValue.length)}</span>;
+  }
+
   return (
     <main className="main">
-      {/* Project Heading */}
-      <h2>Project 5: GitHub Account Finder</h2>
-
-      {/* Input field and search button */}
-      <div className="search-form">
-        <input
-          placeholder="Enter username or email"
-          onChange={handleOnChange} // Handle user input
+      <h2>GitHub Account Finder</h2>
+      <div className="search-container">
+        <SearchBar
+          value={inputValue}
+          onChange={handleOnChange}
+          onFocus={() => setShowSuggestions(true)}
+          onBlur={handleInputBlur}
+          inputRef={inputRef}
+          onSubmit={onSearchSubmit}
         />
-        <button onClick={onSearchSubmit}>Search</button>
+        {showSuggestions && (
+          <Suggestions
+            suggestions={suggestions}
+            loading={suggestLoading}
+            inputValue={inputValue}
+            onSuggestionClick={handleSuggestionClick}
+            highlightMatch={highlightMatch}
+          />
+        )}
       </div>
-
-      {/* Display the search results */}
+      {loading && <div className="loading">Loading...</div>}
+      {error && <div className="error">{error}</div>}
       <h3>Results</h3>
-      <div id="results">
+      <div id="results" className="card-grid">
         <Fragment>
-          {/* Loop through each user and render a UserCard component */}
           {results.map((user) => (
             <UserCard
-              key={user.id} // Add a unique key for each item (recommended in React lists)
+              key={user.id}
               profileLink={user.avatar_url}
               accountLink={user.html_url}
               username={user.login}
+              userType={user.type}
             />
           ))}
         </Fragment>
